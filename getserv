@@ -1,0 +1,223 @@
+#!/usr/bin/env python
+"""
+This script will return
+a random server from the net,
+or servers if provided a cidr
+Dependancy: nmap
+"""
+
+import os
+import sys
+import argparse
+import logging
+import subprocess
+import random
+import webbrowser
+
+# pylint: disable=consider-using-with
+# pylint: disable=unspecified-encoding
+# pylint: disable=too-many-branches
+
+
+def args():
+    """
+    Args
+    """
+    parser = argparse.ArgumentParser()
+    required = parser.add_argument_group('required arguments')
+    required.add_argument("-p", "--port", help="Port", required=True)
+    parser.add_argument("-c", "--cidr", help="CIDR", required=False)
+    parser.add_argument("-d", "--debug", action="store_true", help="Debug")
+    parser.add_argument("-m", "--multi", action="store_true", help="Multi")
+    parser.add_argument("-w", "--web", action="store_true", help="Web")
+    arguments = parser.parse_args()
+    return arguments
+
+
+def nmap_scan(port, output_file, cidr=None) -> bool:
+    """
+    Nmap scan
+    """
+    # aggression factor = af
+    if port == "80":
+        agg_factor = "50"
+    else:
+        agg_factor = "500"
+    if cidr:
+        option = cidr
+    else:
+        option = " -iR " + agg_factor
+    # Nmap scan
+    scan = f"nmap -q {option} -p {port} -oG {output_file}"
+    logging.debug("Scan cmd: %s", scan)
+    # Run scan with subprocess.popen
+    # And get stderr, stdout and return code
+    process = subprocess.Popen(
+        scan,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE
+    )
+    stdout, stderr = process.communicate()
+    logging.debug("Stdout: %s", stdout)
+    return_code = process.returncode
+    logging.debug("Return code: %s", return_code)
+    if return_code != 0:
+        logging.error("Error: %s", stderr)
+        return False
+    return True
+
+
+def check_output_file(output_file) -> bool:
+    """
+    Check output file
+    has at least one line
+    that has "open" string in it
+    """
+    # Check output file
+    # Test if exists
+    if not os.path.exists(output_file):
+        logging.debug("Output file does not exist")
+        return False
+    with open(output_file, "r") as file:
+        for line in file:
+            if "open" in line:
+                logging.debug("Found open port")
+                return True
+    logging.debug("No open ports found")
+    return False
+
+
+def cleanup_output_file(output_file):
+    """
+    Cleanup output file
+    """
+    # remove output file
+    try:
+        os.remove(output_file)
+    except OSError:
+        logging.error("Error: %s", OSError)
+
+
+def preflight(output_file):
+    """
+    Preflight
+    """
+    # remove output file if it exists
+    try:
+        os.remove(output_file)
+    except OSError:
+        pass
+
+
+def get_list_of_ips(output_file) -> list:
+    """
+    Get list of ips
+    """
+    # Get list of ips
+    ips = []
+    with open(output_file, "r") as file:
+        for line in file:
+            if "open" in line:
+                ips.append(line.split()[1])
+    return ips
+
+
+def main():
+    """
+    Main
+    """
+    # Get args
+    arguments = args()
+
+    # Set up logging
+    if arguments.debug:
+        logging.basicConfig(level=logging.DEBUG)
+    else:
+        logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+            format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+
+    # Set variables
+    output_file = "output.out"
+    logging.debug("Output file: %s", output_file)
+    port = arguments.port
+    logging.debug("Port: %s", port)
+
+    # Preflight
+    preflight(output_file)
+
+    # CIDR path
+    if arguments.cidr:
+        if arguments.multi:
+            logging.error(
+                "Error: CIDR and multi options are mutually exclusive"
+                )
+            sys.exit(1)
+        cidr = arguments.cidr
+        # Nmap scan
+        if not nmap_scan(port, output_file, cidr):
+            logging.error("Error: nmap scan failed")
+            sys.exit(1)
+        # check output file
+        if not check_output_file(output_file):
+            logging.error("Error: no open ports found")
+            cleanup_output_file(output_file)
+            sys.exit(1)
+        # Get list of ips
+        ips = get_list_of_ips(output_file)
+        # Print ips
+        for ip_address in ips:
+            print(ip_address)
+
+    if arguments.cidr is None:
+        # while check output file has no open ports
+        while not check_output_file(output_file):
+            # Run nmap scan
+            if not nmap_scan(port, output_file):
+                logging.error("Error running nmap scan")
+                sys.exit(1)
+
+        # Get list of ips
+        ips = get_list_of_ips(output_file)
+        logging.debug("List of ips: %s", ips)
+
+        # Return multi ips
+        if arguments.multi:
+            # Ensure list of ips has at least two ips
+            if len(ips) < 2:
+                # Scan again
+                cleanup_output_file(output_file)
+                while not check_output_file(output_file):
+                    # Run nmap scan
+                    if not nmap_scan(port, output_file):
+                        logging.error("Error running nmap scan")
+                        sys.exit(1)
+                # concat list of ips
+                ips = ips + get_list_of_ips(output_file)
+            for ip_address in ips:
+                print(ip_address)
+
+        # Return one random ip from list
+        server = random.choice(ips)
+        if not arguments.multi:
+            ips = [server]
+            print(server)
+
+    # Open result in web browser
+    if arguments.web:
+        for ip_address in ips:
+            if port == "80":
+                webbrowser.open(f"http://{ip_address}")
+            elif port == "443":
+                webbrowser.open(f"https://{ip_address}")
+            else:
+                webbrowser.open(f"http://{ip_address}:{port}")
+
+    # Cleanup output file
+    cleanup_output_file(output_file)
+
+
+if __name__ == "__main__":
+    main()
