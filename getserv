@@ -8,6 +8,7 @@ Dependancy: nmap
 
 import os
 import sys
+import socket
 import argparse
 import logging
 import subprocess
@@ -110,6 +111,19 @@ def preflight(output_file):
         pass
 
 
+def get_dns_name(ip_address) -> str:
+    """
+    Get dns name
+    """
+    # Get dns name
+    dns_name = ""
+    try:
+        dns_name = socket.gethostbyaddr(ip_address)[0]
+    except socket.herror:
+        pass
+    return dns_name
+
+
 def get_list_of_ips(output_file) -> list:
     """
     Get list of ips
@@ -202,7 +216,11 @@ def main():
         # Return one random ip from list
         server = random.choice(ips)
         if not arguments.multi:
-            ips = [server]
+            # if port is 80 resolve dns name
+            if port == "80":
+                logging.debug("Port is 80")
+                dns_name = get_dns_name(server)
+                logging.debug("DNS name: %s", dns_name)
             print(server)
 
     # Open result in web browser
